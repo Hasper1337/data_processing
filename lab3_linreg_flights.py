@@ -1,328 +1,381 @@
-"""ЛР №3: NumPy, Pandas, линейная регрессия и градиентный спуск (данные 2008.csv, авиарейсы).
-
-Запуск:  python lab3_linreg_flights.py 2008.csv [airports.csv]
-Файл airports.csv (iata, city) нужен только для ответа "в каком городе находится аэропорт" (п. 9).
-Графики сохраняются в PNG рядом со скриптом, ответы печатаются в консоль.
-"""
-import sys
+import time
 
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression, LassoCV, RidgeCV
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.metrics import mean_squared_error, r2_score
 
-DATA = sys.argv[1] if len(sys.argv) > 1 else "2008.csv"
-AIRPORTS = sys.argv[2] if len(sys.argv) > 2 else "airports.csv"
-NROWS = 100000          # сколько строк читать (весь файл очень большой и медленный)
-GD_TRAIN_SIZE = 5000    # сколько объектов использовать в градиентном спуске (для скорости)
+# x = np.array([6, 2, 0, 3, 0, 0, 5, 7, 0])
+# def max_element(arr):
+#   zero = np.where(arr == 0)[0]
+#   if len(zero) == 0:
+#     return None
 
-# =====================================================================
-# NumPy (без циклов)
-# =====================================================================
+#   after_zero = zero + 1
+#   valid = after_zero[after_zero < len(arr)]
+#   values = arr[valid]
+#   return np.max(values)
 
+# print(max_element(x))
+# print("#########################################")
+# X = np.arange(0,10).reshape((2, 5))
+# v = 3.6
+# def nearest_val(X, v):
+#   diff = np.abs(X - v)
+#   min_index = np.argmin(diff)
+#   return X.ravel()[min_index]
 
-def max_element(arr):
-    """П.1: максимум среди элементов, перед которыми стоит нулевой."""
-    after_zero = arr[1:][arr[:-1] == 0]
-    return after_zero.max() if after_zero.size > 0 else None
+# print(nearest_val(X, v))
+# print("#########################################")
+# x = np.random.randint(5, size=(4, 4))
+# def scale(X):
+#   stds = np.std(X, axis=0)
+#   stds[stds == 0] = 1
+#   X_scl = (X - np.mean(X, axis=0)) / stds
+#   return X_scl
 
+# print(scale(x))
+# print("#########################################")
+# x = np.random.randint(5, size=(4, 4))
+# def get_stats(X):
+#   print(f'Матрица:\n {X}')
+#   print(f'Определитель матрицы: {np.linalg.det(X)}')
+#   print(f'След матрицы: {np.trace(X)}')
+#   print(f'Наименьший и наибольший элементы матрицы: {np.min(X)}, {np.max(X)}')
+#   print(f'Норма Фробениуса: {np.linalg.norm(X, ord='fro')}')
+#   print(f'Собственные числа матрицы:\n {np.linalg.eig(X)}')
+#   print(f'Обратная матрица:\n {np.linalg.inv(X)}')
 
-def nearest_value(X, v):
-    """П.2: ближайший к v элемент матрицы."""
-    return X.flat[np.abs(X - v).argmin()]
+# get_stats(x)
+# print("#########################################")
+# x10 = 0
+# for exp_num in range(100):
+#   x1 = np.random.randint(10, size=(10, 10))
+#   x2 = np.random.randint(10, size=(10, 10))
+#   x3 = x1 * x2
+#   max_index = np.argmax(x3)
+#   x10 += x3.ravel()[max_index]
+#   print(x3.ravel()[max_index])
+# print(x10/100, np.quantile(x3, 0.95))
 
+airline = pd.read_csv("2008.csv")
 
-def scale(X):
-    """П.3: вычесть среднее и поделить на стандартное отклонение по столбцам."""
-    std = X.std(axis=0)
-    std[std == 0] = 1          # чтобы не делить на ноль
-    return (X - X.mean(axis=0)) / std
+# #6. Какая из причин отмены рейса (CancellationCode) была самой частой? (расшифровки кодов можно найти в описании данных)
+# print(airline['CancellationCode'].value_counts()[:1])
+# #7. (0.3 балла) Найдите среднее, минимальное и максимальное расстояние, пройденное самолетом.
+# print(f"Найдите среднее, минимальное и максимальное расстояние:\nmean: {airline['Distance'].mean():.2f}, min: {airline['Distance'].min()}, max: {airline['Distance'].max()}")
+# #8. (0.3 балла) Не выглядит ли подозрительным минимальное пройденное расстояние? В какие дни и на каких рейсах оно было? Какое расстояние было пройдено этими же рейсами в другие дни?
+# fil_air = airline[airline['Distance'] == 31]
+# col = ['Year', 'Month', 'DayofMonth', 'Distance', 'FlightNum']
+# print(fil_air[col])
+# FlightNum64_Airline = airline[airline['FlightNum'] == 64]
+# FlightNum65_Airline = airline[airline['FlightNum'] == 65]
+# print(FlightNum64_Airline[col][:5])
+# print(FlightNum65_Airline[col][:5])
+# #9. (0.3 балла) Из какого аэропорта было произведено больше всего вылетов? В каком городе он находится?
+# print(f'\n{airline['Origin'].value_counts()[:1]}') # Атланты, Джорджия, США
+# #10. (0.3 балла) Найдите для каждого аэропорта среднее время полета (AirTime) по всем вылетевшим из него рейсам. Какой аэропорт имеет наибольшее значение этого показателя?
+# print(airline.groupby('Origin')['AirTime'].mean())
+# print(f"Аэропорт с наибольшим средним временем полета: {airline.groupby('Origin')['AirTime'].mean().idxmax()} {airline.groupby('Origin')['AirTime'].mean().max()}")
+# #11. (0.5 балла) Найдите аэропорт, у которого наибольшая доля задержанных (DepDelay > 0) рейсов. Исключите при этом из рассмотрения аэропорты, из которых было отправлено меньше 1000 рейсов (используйте функцию filter после groupby).
+# dep_airline = airline[airline['DepDelay'] > 0]
+# dep1_airline = dep_airline.groupby('Origin').filter(lambda x: len(x) >= 1000)
+# print(dep1_airline['Origin'].value_counts()[:1])
 
+# Имеются ли в данных пропущенные значения?
+print(airline.isnull().values.any())
 
-def get_stats(X):
-    """П.4: характеристики матрицы."""
-    return {
-        "определитель": np.linalg.det(X),
-        "след": np.trace(X),
-        "минимум": X.min(),
-        "максимум": X.max(),
-        "норма Фробениуса": np.linalg.norm(X, "fro"),
-        "собственные числа": np.linalg.eigvals(X),
-        "обратная матрица": np.linalg.inv(X),
-    }
+# Сколько всего пропущенных элементов в таблице "объект-признак"?
+print(airline.isnull().sum().sum())
 
+# Сколько объектов имеют хотя бы один пропуск?
+print(airline.isnull().any(axis=1).sum())
 
-print("=== NumPy ===")
-print("1.", max_element(np.array([6, 2, 0, 3, 0, 0, 5, 7, 0])), "(ожидается 5)")
-print("2.", nearest_value(np.arange(0, 10).reshape((2, 5)), 3.6), "(ожидается 4)")
-Xr = np.random.randint(0, 10, size=(5, 3)).astype(float)
-print("3. средние после scale:", scale(Xr).mean(axis=0).round(6), "std:", scale(Xr).std(axis=0).round(6))
-stats = get_stats(np.random.normal(10, 1, size=(4, 4)))
-for k, v in stats.items():
-    if k not in ("обратная матрица", "собственные числа"):
-        print("4.", k, "=", v)
+# Сколько признаков имеют хотя бы одно пропущенное значение?
+print(airline.isnull().any(axis=0).sum())
 
-# П.5: 100 экспериментов сразу (массив 100 x 10 x 10), без цикла
-A = np.random.standard_normal((100, 10, 10))
-B = np.random.standard_normal((100, 10, 10))
-maxima = (A @ B).max(axis=(1, 2))
-print("5. среднее максимумов:", maxima.mean(), "| 95%-квантиль:", np.quantile(maxima, 0.95))
+# Имеются ли пропущенные значения в целевой переменной?
+target_per = 'DepDelay'
+print(airline[target_per].isnull().sum())
 
-# =====================================================================
-# Pandas
-# =====================================================================
-print("\n=== Pandas ===")
-df = pd.read_csv(DATA, nrows=NROWS)
-print("Размер:", df.shape)
+# Проверка связи с другими признаками
+missing_target_rows = airline[airline[target_per].isnull()]
+if len(missing_target_rows) > 0:
+    cancelled_in_missing = missing_target_rows['Cancelled'].sum()
+    print(f"Из них отмененных рейсов: {cancelled_in_missing}")
 
-print("6. самая частая причина отмены:", df["CancellationCode"].value_counts().idxmax(),
-      "(A - перевозчик, B - погода, C - NAS, D - безопасность)")
-print("7. расстояние: среднее", df["Distance"].mean(), "мин", df["Distance"].min(), "макс", df["Distance"].max())
+# Исключаем объекты с пропущенным значением целевой переменной
+airline_clean = airline.dropna(subset=[target_per]).copy()
 
-short = df[df["Distance"] == df["Distance"].min()]
-print("8. рейсы с минимальным расстоянием:")
-print(short[["Month", "DayofMonth", "UniqueCarrier", "FlightNum", "Origin", "Dest", "Distance"]].head())
-same = df[df["FlightNum"].isin(short["FlightNum"]) & df["UniqueCarrier"].isin(short["UniqueCarrier"])]
-print("   те же рейсы в другие дни (Distance):")
-print(same.groupby(["UniqueCarrier", "FlightNum"])["Distance"].agg(["min", "max", "count"]).head())
+# Исключаем объекты со значением целевой переменной, равным 0
+airline_clean = airline_clean[airline_clean[target_per] != 0].copy()
 
-top_airport = df["Origin"].value_counts().idxmax()
-print("9. больше всего вылетов из:", top_airport, end="")
-try:
-    ap = pd.read_csv(AIRPORTS)
-    print(", город:", ap.loc[ap["iata"] == top_airport, "city"].values)
-except FileNotFoundError:
-    print(" (для города нужен airports.csv)")
+leakage_features = ['CarrierDelay', 'WeatherDelay', 'NASDelay', 'SecurityDelay', 'LateAircraftDelay', 'TailNum', 'Year', 'ArrDelay']
+airline_clean = airline_clean.drop(columns=leakage_features)
 
-air = df.groupby("Origin")["AirTime"].mean()
-print("10. наибольшее среднее AirTime:", air.idxmax(), round(air.max(), 1))
+# 4. Выделение целевой переменной
+y = airline_clean[target_per].values
+X = airline_clean.drop(columns=[target_per])
 
-big = df.groupby("Origin").filter(lambda g: len(g) >= 1000)
-if len(big) > 0:
-    share = (big["DepDelay"] > 0).groupby(big["Origin"]).mean()
-    print("11. наибольшая доля задержек:", share.idxmax(), round(share.max(), 3))
-else:
-    print("11. нет аэропортов с 1000+ рейсов (увеличьте NROWS)")
+print(f"\nРазмер матрицы признаков до очистки {airline.shape}, после {X.shape}")
+print(f"Размер вектора целевой переменной: {y.shape}")
 
-# =====================================================================
-# Подготовка данных
-# =====================================================================
-print("\n=== Подготовка данных ===")
-# 12. Пропуски
-print("12. есть пропуски:", df.isna().any().any())
-print("    всего пропущенных элементов:", int(df.isna().sum().sum()))
-print("    объектов с пропуском:", int(df.isna().any(axis=1).sum()))
-print("    признаков с пропуском:", int(df.isna().any(axis=0).sum()))
-print("    пропусков в DepDelay:", int(df["DepDelay"].isna().sum()))
-missing = df[df["DepDelay"].isna()]
-print("    у объектов без DepDelay Cancelled == 1 в доле:", (missing["Cancelled"] == 1).mean())
-# Пропуск DepDelay бывает только у отменённых рейсов (они не вылетели), поэтому
-# признаки Cancelled и CancellationCode после удаления таких объектов бесполезны.
+# 13. (0.5 балла) Обратите внимание, что признаки DepTime, CRSDepTime, ArrTime, CRSArrTime приведены в формате hhmm, в связи с чем будет не вполне корректно рассматривать их как вещественные.
+time_features = ['DepTime', 'CRSDepTime', 'ArrTime', 'CRSArrTime']
 
-df = df.dropna(subset=["DepDelay"])
-df = df[df["DepDelay"] != 0]
-y = df["DepDelay"].astype(float)
-X = df.drop(columns=["DepDelay", "Cancelled", "CancellationCode"])
+for feature in time_features:
+    hour_col = f"{feature}_Hour"
+    minute_col = f"{feature}_Minute"
 
-# 13. hhmm -> час и минута
-for col in ["DepTime", "CRSDepTime", "ArrTime", "CRSArrTime"]:
-    X[col + "_Hour"] = X[col] // 100          # NaN остаётся NaN
-    X[col + "_Minute"] = X[col] % 100
-    X = X.drop(columns=col)
+    not_na_mask = airline_clean[feature].notna()
 
-# 14. Исключаем признаки, которые "выдают" ответ:
-#  - DepTime (фактическое время вылета): DepDelay = DepTime - CRSDepTime;
-#  - ArrTime, ArrDelay, ActualElapsedTime, AirTime, TaxiIn, Diverted и причины задержек
-#    становятся известны только после полёта и напрямую связаны с задержкой.
-leak = ["DepTime_Hour", "DepTime_Minute", "ArrTime_Hour", "ArrTime_Minute", "ArrDelay",
-        "ActualElapsedTime", "AirTime", "TaxiIn", "Diverted", "CarrierDelay",
-        "WeatherDelay", "NASDelay", "SecurityDelay", "LateAircraftDelay", "TailNum", "Year"]
-X = X.drop(columns=[c for c in leak if c in X.columns])
-print("14. оставшиеся признаки:", list(X.columns))
+    valid_values = airline_clean.loc[not_na_mask, feature].astype(int)
 
-# 15. Масштабирование и one-hot кодирование
-for col in ["CRSDepTime_Hour", "TaxiOut", "FlightNum"]:
+    airline_clean.loc[not_na_mask, hour_col] = valid_values // 100
+    airline_clean.loc[not_na_mask, minute_col] = valid_values % 100
+
+    airline_clean.drop(columns=[feature], inplace=True)
+
+# Проверка результата
+print(airline_clean[['DepTime_Hour', 'DepTime_Minute', 'CRSDepTime_Hour', 'CRSDepTime_Minute']].head(10))
+# каждую гистограмму рисуем в отдельном окне, иначе они накладываются друг на друга
+for col in ['DepTime_Hour', 'TaxiIn', 'FlightNum']:
     plt.figure()
-    X[col].hist(bins=20)
+    airline_clean[col].hist(bins=20)
     plt.title(col)
-    plt.savefig("hist_%s.png" % col)
-    plt.close()
-print("15. гистограммы сохранены (hist_*.png): у признаков разный масштаб, у FlightNum")
-print("    значения до 7000, у остальных - десятки; без масштабирования веса несравнимы.")
+plt.show()
+
+
+# 14. Исключаем признаки, которые слишком сильно связаны с целевой переменной
+# Важно: в п. 13 столбцы со временем менялись в airline_clean, а X был выделен раньше,
+# поэтому X нужно получить заново.
+X = airline_clean.drop(columns=[target_per])
+
+# Посмотрим на корреляцию вещественных признаков с DepDelay
+with np.errstate(all='ignore'):  # у константных столбцов корреляция не определена (NaN)
+    print(X.select_dtypes(include='number').corrwith(airline_clean[target_per]).sort_values(ascending=False))
+
+# Обоснование:
+# - DepTime_Hour, DepTime_Minute - фактическое время вылета. DepDelay = DepTime - CRSDepTime,
+#   то есть ответ по этим признакам просто вычисляется.
+# - ArrTime_*, ActualElapsedTime, AirTime, TaxiIn, TaxiOut, Diverted - фактические значения,
+#   они становятся известны только после вылета/прилёта, а задержку мы хотим предсказывать заранее.
+# - Cancelled, CancellationCode - после удаления пропусков DepDelay отменённых рейсов не осталось
+#   (Cancelled всегда 0, CancellationCode всегда пустой), поэтому эти признаки бесполезны.
+leakage_features_2 = ['DepTime_Hour', 'DepTime_Minute', 'ArrTime_Hour', 'ArrTime_Minute',
+                      'ActualElapsedTime', 'AirTime', 'TaxiIn', 'TaxiOut', 'Diverted',
+                      'Cancelled', 'CancellationCode']
+X = X.drop(columns=leakage_features_2)
+print(f"\nОставшиеся признаки: {list(X.columns)}")
+
+# 15. Масштабирование вещественных признаков и one-hot кодирование категориальных
+# По гистограммам видно, что признаки имеют совершенно разный масштаб (часы 0..24,
+# TaxiIn - десятки минут, FlightNum - тысячи). Без масштабирования веса линейной модели
+# нельзя сравнивать между собой, а градиентный спуск будет сходиться плохо.
+
+# Во всём файле около 7 млн строк, после one-hot кодирования (сотни столбцов) это не поместится
+# в память, поэтому берём случайную подвыборку.
+SAMPLE_SIZE = 50000
+if len(X) > SAMPLE_SIZE:
+    X = X.sample(n=SAMPLE_SIZE, random_state=42)
+y = airline_clean.loc[X.index, target_per].values
 
 
 def transform_data(data):
     data = data.copy()
-    cat_cols = list(data.select_dtypes(exclude="number").columns)
-    num_cols = [c for c in data.columns if c not in cat_cols]
+    num_cols = data.select_dtypes(include='number').columns
+    cat_cols = data.select_dtypes(exclude='number').columns
+
+    # 1) пропуски: нули в вещественных, строка 'nan' в категориальных
     data[num_cols] = data[num_cols].fillna(0)
-    data[cat_cols] = data[cat_cols].fillna("nan").astype(str)
+    data[cat_cols] = data[cat_cols].fillna('nan')
+
+    # 2) масштабирование вещественных признаков
     data[num_cols] = StandardScaler().fit_transform(data[num_cols])
+
+    # 3) one-hot кодирование категориальных признаков
     return pd.get_dummies(data, columns=cat_cols, dtype=float)
 
 
 X = transform_data(X)
-print("    признаков после преобразования:", X.shape[1])
+print(f"Размер матрицы после transform_data: {X.shape}")
 
-# 16. Разбиение 70/30
-X_train, X_test, y_train, y_test = train_test_split(X.values, y.values, test_size=0.3, random_state=0)
-print("16. обучение:", X_train.shape, "контроль:", X_test.shape)
+# 16. Разбиение на обучающую и контрольную выборки 70/30
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+print(f"Обучение: {X_train.shape}, контроль: {X_test.shape}")
 
-# =====================================================================
-# Scikit-learn
-# =====================================================================
-print("\n=== Scikit-learn ===")
+# 17. Линейная регрессия на первых 1000 объектах обучающей выборки
+X_train_1000, y_train_1000 = X_train[:1000], y_train[:1000]
+lin_reg = LinearRegression().fit(X_train_1000, y_train_1000)
 
+pred_train = lin_reg.predict(X_train_1000)
+pred_test = lin_reg.predict(X_test)
+print("\nLinearRegression:")
+print(f"train: MSE = {mean_squared_error(y_train_1000, pred_train):.2f}, R2 = {r2_score(y_train_1000, pred_train):.3f}")
+print(f"test:  MSE = {mean_squared_error(y_test, pred_test):.2f}, R2 = {r2_score(y_test, pred_test):.3f}")
+print(f"Максимальный по модулю вес: {np.abs(lin_reg.coef_).max():.3e}")
+# Признаков (сотни после one-hot) сравнимо с числом объектов (1000), поэтому модель переобучается:
+# на обучении ошибка маленькая, а на контроле большая; веса могут получиться огромными.
 
-def report(model, name, Xa, ya, Xb, yb):
-    pa, pb = model.predict(Xa), model.predict(Xb)
-    print("%-10s train MSE=%.1f R2=%.3f | test MSE=%.1f R2=%.3f" % (
-        name, mean_squared_error(ya, pa), r2_score(ya, pa), mean_squared_error(yb, pb), r2_score(yb, pb)))
-
-
-Xs, ys = X_train[:1000], y_train[:1000]
-lin = LinearRegression().fit(Xs, ys)
-print("17.")
-report(lin, "Linear", Xs, ys, X_test, y_test)
-print("    max |w| =", np.abs(lin.coef_).max(), "- огромные веса и переобучение (признаков больше, чем объектов)")
-
+# 18. Ridge (L2) и Lasso (L1) с подбором alpha по кросс-валидации на 5 фолдах
 alpha_grid = np.logspace(-3, 3, 10)
-ridge = RidgeCV(alphas=alpha_grid, cv=5).fit(Xs, ys)
-lasso = LassoCV(alphas=alpha_grid, cv=KFold(5), max_iter=5000).fit(Xs, ys)
-print("18.")
-report(ridge, "Ridge", Xs, ys, X_test, y_test)
-report(lasso, "Lasso", Xs, ys, X_test, y_test)
-print("    лучшие alpha: Ridge", ridge.alpha_, "Lasso", lasso.alpha_, "| max |w| Ridge", np.abs(ridge.coef_).max())
 
-# =====================================================================
-# Градиентный спуск
-# =====================================================================
-print("\n=== Градиентный спуск ===")
-# 19. Единичный признак
-Xtr = np.hstack([X_train, np.ones((len(X_train), 1))])[:GD_TRAIN_SIZE]
-ytr = y_train[:GD_TRAIN_SIZE]
-Xte = np.hstack([X_test, np.ones((len(X_test), 1))])
-yte = y_test
+ridge_search = GridSearchCV(Ridge(), {'alpha': alpha_grid}, cv=5, scoring='neg_mean_squared_error')
+ridge_search.fit(X_train_1000, y_train_1000)
+ridge = ridge_search.best_estimator_
+
+lasso_search = GridSearchCV(Lasso(max_iter=10000), {'alpha': alpha_grid}, cv=5, scoring='neg_mean_squared_error')
+lasso_search.fit(X_train_1000, y_train_1000)
+lasso = lasso_search.best_estimator_
+
+for name, model in [('Ridge', ridge), ('Lasso', lasso)]:
+    pred_test = model.predict(X_test)
+    print(f"\n{name}: лучшее alpha = {model.alpha:.3g}")
+    print(f"test: MSE = {mean_squared_error(y_test, pred_test):.2f}, R2 = {r2_score(y_test, pred_test):.3f}")
+    print(f"Максимальный по модулю вес: {np.abs(model.coef_).max():.3f}")
+print(f"Нулевых весов у Lasso: {np.sum(lasso.coef_ == 0)} из {len(lasso.coef_)}")
+# Регуляризация ограничивает веса, поэтому модели меньше переобучаются.
+# Lasso (L1) зануляет часть весов, то есть сам отбирает признаки.
+
+# 19. Градиентный спуск для MSPE. Добавляем единичный признак (свободный член)
+X_train_gd = np.hstack([X_train.values, np.ones((len(X_train), 1))])
+X_test_gd = np.hstack([X_test.values, np.ones((len(X_test), 1))])
+
+# 20. Функции: предсказание, MSPE и его градиент, а также версии с L2-регуляризацией
+REG_COEF = 0.01
 
 
-# 20. Функции
 def make_pred(X, w):
     return X @ w
 
 
 def get_func(w, X, y):
-    """MSPE = mean(((y - Xw) / y)^2)."""
+    # MSPE = 1/l * sum(((y - Xw) / y)^2)
     return np.mean(((y - make_pred(X, w)) / y) ** 2)
 
 
 def get_grad(w, X, y):
-    """Градиент MSPE: 2/l * X^T (Xw - y) / y^2 (деление на y^2 поэлементное)."""
+    # производная MSPE по w: 2/l * X^T * ((Xw - y) / y^2)
     return 2 / len(y) * X.T @ ((make_pred(X, w) - y) / y ** 2)
 
 
 def get_reg_func(w, X, y):
-    return get_func(w, X, y) + np.sum(w ** 2)
+    return get_func(w, X, y) + REG_COEF * np.sum(w ** 2)
 
 
 def get_reg_grad(w, X, y):
-    return get_grad(w, X, y) + 2 * w
+    return get_grad(w, X, y) + 2 * REG_COEF * w
 
 
 # 21. Градиентный спуск
 def grad_descent(X, y, w0, step_size, max_iter, eps, is_reg):
-    func = get_reg_func if is_reg else get_func
-    grad = get_reg_grad if is_reg else get_grad
+    if is_reg:
+        func, grad = get_reg_func, get_reg_grad
+    else:
+        func, grad = get_func, get_grad
+
     w = w0.copy()
     history = [func(w, X, y)]
-    for _ in range(max_iter):
+    for i in range(max_iter):
         w_new = w - step_size * grad(w, X, y)
         history.append(func(w_new, X, y))
-        if not np.isfinite(history[-1]):       # метод расходится
+        if not np.isfinite(history[-1]):        # шаг слишком большой - метод разошёлся
             break
-        done = np.linalg.norm(w_new - w) < eps
+        if np.linalg.norm(w_new - w) < eps:     # веса почти не меняются - останавливаемся
+            w = w_new
+            break
         w = w_new
-        if done:
-            break
     return w, history
 
 
-# 23. Стохастический градиентный спуск (один случайный объект за шаг)
-def sgd(X, y, w0, step_size, max_iter, eps, is_reg, seed=0):
-    rng = np.random.default_rng(seed)
-    func = get_reg_func if is_reg else get_func
-    grad = get_reg_grad if is_reg else get_grad
+n_features = X_train_gd.shape[1]
+w_zeros = np.zeros(n_features)
+w_random = np.random.default_rng(0).normal(0, 0.1, n_features)
+
+plt.figure(figsize=(9, 5))
+for step in [0.0001, 0.001, 0.01, 0.1]:
+    for w0_name, w0 in [('нули', w_zeros), ('случайные', w_random)]:
+        with np.errstate(all='ignore'):
+            w, history = grad_descent(X_train_gd, y_train, w0, step, 300, 1e-6, False)
+        print(f"шаг = {step}, начальные веса = {w0_name}: MSPE = {history[-1]:.4g}, итераций = {len(history) - 1}")
+        plt.plot(history, label=f"шаг {step}, w0 = {w0_name}")
+plt.yscale('log')
+plt.xlabel('итерация')
+plt.ylabel('MSPE на обучении')
+plt.title('Градиентный спуск при разных шагах и начальных весах')
+plt.legend()
+plt.show()
+# Слишком маленький шаг - медленная сходимость, слишком большой - метод расходится.
+# От начального приближения результат почти не зависит (функционал выпуклый).
+
+# 22. Сходимость с регуляризацией и без
+STEP = 0.001
+w_gd, history_gd = grad_descent(X_train_gd, y_train, w_zeros, STEP, 1000, 1e-6, False)
+w_gd_reg, history_gd_reg = grad_descent(X_train_gd, y_train, w_zeros, STEP, 1000, 1e-6, True)
+
+plt.figure(figsize=(9, 5))
+plt.plot(history_gd, label='без регуляризации')
+plt.plot(history_gd_reg, label='с L2-регуляризацией')
+plt.xlabel('итерация')
+plt.ylabel('значение функционала')
+plt.title('Градиентный спуск')
+plt.legend()
+plt.show()
+print(f"\nGD без регуляризации: MSPE на контроле = {get_func(w_gd, X_test_gd, y_test):.4f}")
+print(f"GD с регуляризацией:  MSPE на контроле = {get_func(w_gd_reg, X_test_gd, y_test):.4f}")
+
+
+# 23. Стохастический градиентный спуск: на каждом шаге градиент по одному случайному объекту
+def sgd(X, y, w0, step_size, max_iter, eps, is_reg):
+    if is_reg:
+        func, grad = get_reg_func, get_reg_grad
+    else:
+        func, grad = get_func, get_grad
+
+    rng = np.random.default_rng(42)
     w = w0.copy()
     history = [func(w, X, y)]
-    for k in range(1, max_iter + 1):
-        i = rng.integers(len(y))
-        w_new = w - step_size * grad(w, X[i:i + 1], y[i:i + 1])
-        if k % 100 == 0:                       # функционал на всей выборке считаем редко
+    for i in range(max_iter):
+        k = rng.integers(len(y))
+        w_new = w - step_size * grad(w, X[k:k + 1], y[k:k + 1])
+        if i % 100 == 0:                        # функционал по всей выборке считаем раз в 100 шагов
             history.append(func(w_new, X, y))
-            if not np.isfinite(history[-1]):
-                break
-        done = np.linalg.norm(w_new - w) < eps
-        w = w_new
-        if done:
+        if np.linalg.norm(w_new - w) < eps:
+            w = w_new
             break
+        w = w_new
     return w, history
 
 
-def plot_history(histories, title, filename):
-    plt.figure(figsize=(8, 5))
-    for label, h in histories.items():
-        plt.plot(h, label=label)
-    plt.yscale("log")
-    plt.xlabel("итерация")
-    plt.ylabel("значение функционала")
-    plt.title(title)
-    plt.legend()
-    plt.grid()
-    plt.savefig(filename, dpi=110)
-    plt.close()
+start = time.time()
+w_sgd, history_sgd = sgd(X_train_gd, y_train, w_zeros, STEP, 20000, 1e-10, False)
+time_sgd = time.time() - start
+w_sgd_reg, history_sgd_reg = sgd(X_train_gd, y_train, w_zeros, STEP, 20000, 1e-10, True)
 
+plt.figure(figsize=(9, 5))
+plt.plot(history_sgd, label='без регуляризации')
+plt.plot(history_sgd_reg, label='с L2-регуляризацией')
+plt.xlabel('итерация / 100')
+plt.ylabel('значение функционала')
+plt.title('Стохастический градиентный спуск')
+plt.legend()
+plt.show()
 
-d = Xtr.shape[1]
-rng = np.random.default_rng(0)
-inits = {"нули": np.zeros(d), "случайные": rng.normal(0, 0.1, d)}
+# 24. Сравнение SGD и обычного градиентного спуска
+start = time.time()
+grad_descent(X_train_gd, y_train, w_zeros, STEP, 1000, 1e-6, False)
+time_gd = time.time() - start
+print(f"\nSGD: MSPE на контроле = {get_func(w_sgd, X_test_gd, y_test):.4f}, время = {time_sgd:.2f} с")
+print(f"GD:  MSPE на контроле = {get_func(w_gd, X_test_gd, y_test):.4f}, время = {time_gd:.2f} с")
+# Шаг SGD гораздо дешевле (один объект вместо всей выборки), но функционал убывает шумно.
 
-# Эксперимент с шагом и начальными весами
-print("21. MSPE на обучении после 100 итераций:")
-hists = {}
-with np.errstate(all="ignore"):
-    for step in [0.001, 1, 10]:
-        for name, w0 in inits.items():
-            w, h = grad_descent(Xtr, ytr, w0, step, 100, 1e-6, False)
-            hists["шаг %g, %s" % (step, name)] = h
-            print("    шаг %-6g w0=%-10s -> %.4g (итераций %d)" % (step, name, h[-1], len(h) - 1))
-plot_history(hists, "Градиентный спуск, MSPE", "gd_steps.png")
-
-# 22. С регуляризацией и без
-STEP = 0.001
-with np.errstate(all="ignore"):
-    w_plain, h_plain = grad_descent(Xtr, ytr, np.zeros(d), STEP, 300, 1e-8, False)
-    w_reg, h_reg = grad_descent(Xtr, ytr, np.zeros(d), STEP, 300, 1e-8, True)
-plot_history({"MSPE": h_plain, "MSPE + L2": h_reg}, "Сходимость с регуляризацией и без", "gd_reg.png")
-print("22. итоговый функционал без/с регуляризацией:", h_plain[-1], h_reg[-1])
-print("    регуляризация штрафует большие веса, поэтому веса остаются меньше, а функционал выше.")
-
-# 23-24. SGD
-with np.errstate(all="ignore"):
-    w_sgd, h_sgd = sgd(Xtr, ytr, np.zeros(d), 0.001, 20000, 1e-12, False)
-    w_sgd_reg, h_sgd_reg = sgd(Xtr, ytr, np.zeros(d), 0.001, 20000, 1e-12, True)
-plot_history({"SGD": h_sgd, "SGD + L2": h_sgd_reg}, "SGD (точки через 100 шагов)", "sgd.png")
-pred = make_pred(Xte, w_sgd)
-print("23. SGD на контроле: MSPE=%.4g MSE=%.1f R2=%.3f" % (
-    get_func(w_sgd, Xte, yte), mean_squared_error(yte, pred), r2_score(yte, pred)))
-print("24. итог SGD без/с регуляризацией:", h_sgd[-1], h_sgd_reg[-1])
-
-# 25. Обычная линейная регрессия (MSE) и её MSPE на контроле
+# 25. Сравнение с обычной линейной регрессией (минимизирует MSE, а не MSPE)
 lin_full = LinearRegression().fit(X_train, y_train)
 w_lin = np.append(lin_full.coef_, lin_full.intercept_)
-print("25. MSPE на контроле: МНК (MSE) =", get_func(w_lin, Xte, yte),
-      "| градиентный спуск по MSPE =", get_func(w_plain, Xte, yte))
-print("    МНК минимизирует MSE, а не MSPE, поэтому по MSPE он обычно хуже решения, найденного прямой оптимизацией MSPE.")
+print(f"\nMSPE на контроле: LinearRegression = {get_func(w_lin, X_test_gd, y_test):.4f}, "
+      f"градиентный спуск по MSPE = {get_func(w_gd, X_test_gd, y_test):.4f}")
+# LinearRegression оптимизирует MSE, поэтому по MSPE она хуже: MSPE сильнее штрафует ошибки
+# на объектах с маленькой задержкой (деление на y^2), и модель, обученная на MSPE, учитывает это.

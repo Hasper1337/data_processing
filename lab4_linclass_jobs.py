@@ -1,225 +1,188 @@
-"""ЛР №4: линейная классификация - предсказание зарплаты по тексту вакансии.
-
-Данные: DataAnalyst.csv (Kaggle, data analyst jobs).
-Запуск: python lab4_linclass_jobs.py DataAnalyst.csv
-Пункты 1-16 из блокнота homework-practice-02-linclass.
-"""
 import re
-import sys
 
 import numpy as np
 import pandas as pd
 from scipy.sparse import hstack, csr_matrix
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix, accuracy_score
+from sklearn.metrics import roc_auc_score, f1_score, accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import OneHotEncoder
 
-PATH = sys.argv[1] if len(sys.argv) > 1 else "DataAnalyst.csv"
+jobs = pd.read_csv("DataAnalyst.csv")
 
-# =====================================================================
-# Подготовка данных (как в блокноте)
-# =====================================================================
-df = pd.read_csv(PATH)
-df = df[df["Salary Estimate"] != "-1"].copy()
+# Подготовка данных
+# Убираем вакансии без оценки зарплаты
+jobs = jobs[jobs['Salary Estimate'] != '-1'].copy()
 
 
-def average_salary(text):
-    """'$37K-$66K (Glassdoor est.)' -> 51500. (В блокноте считается разность границ,
-    но по смыслу задачи нужна именно оценка зарплаты, поэтому берём среднее.)"""
-    low, high = [int(v) for v in re.findall(r"\d+", text)[:2]]
+# '$37K-$66K (Glassdoor est.)' -> 51500.0 (середина вилки)
+# (в блокноте берётся разность границ, но для оценки зарплаты логичнее середина)
+def parse_salary(text):
+    numbers = re.findall(r'\d+', text)
+    low, high = int(numbers[0]), int(numbers[1])
     return (low + high) / 2 * 1000
 
 
-df["Salary Estimate"] = df["Salary Estimate"].apply(average_salary)
-median = df["Salary Estimate"].median()
-df["Salary Estimate"] = (df["Salary Estimate"] > median).astype(int)   # 1 - высокая зарплата
-df = df.drop(columns=["Revenue", "Easy Apply", "Rating", "Unnamed: 0"], errors="ignore")
-print("Объектов:", len(df), "| доля класса 1:", df["Salary Estimate"].mean().round(3))
+jobs['Salary Estimate'] = jobs['Salary Estimate'].apply(parse_salary)
 
-TARGET = "Salary Estimate"
-TEXT_COLS = ["Job Title", "Job Description"]
-CAT_COLS = [c for c in df.columns if c not in TEXT_COLS + [TARGET]]
+# Целевая переменная: 1 - зарплата выше медианы, 0 - не выше
+median_salary = jobs['Salary Estimate'].median()
+jobs['Salary Estimate'] = (jobs['Salary Estimate'] > median_salary).astype(int)
+
+jobs = jobs.drop(columns=['Unnamed: 0', 'Rating', 'Revenue', 'Easy Apply'], errors='ignore')
+print(f"Вакансий: {len(jobs)}, медиана зарплаты: {median_salary:.0f}")
+print(f"Доля класса 1: {jobs['Salary Estimate'].mean():.3f}")
+
+target = 'Salary Estimate'
+text_cols = ['Job Title', 'Job Description']
+cat_cols = [col for col in jobs.columns if col not in text_cols + [target]]
 
 
-def evaluate(name, y_true, proba):
-    """ROC-AUC, F-мера и матрица ошибок."""
+# Одна функция для вывода метрик, чтобы не повторять код
+def print_metrics(name, y_true, proba):
     pred = (proba > 0.5).astype(int)
-    print("%s: ROC-AUC=%.4f F1=%.4f accuracy=%.4f" % (
-        name, roc_auc_score(y_true, proba), f1_score(y_true, pred), accuracy_score(y_true, pred)))
-    print(confusion_matrix(y_true, pred))
+    print(f"\n{name}:")
+    print(f"ROC-AUC = {roc_auc_score(y_true, proba):.4f}, F1 = {f1_score(y_true, pred):.4f}, "
+          f"accuracy = {accuracy_score(y_true, pred):.4f}")
+    print(f"Матрица ошибок:\n{confusion_matrix(y_true, pred)}")
 
 
-def fit_lr(X, y, C=1.0):
-    return LogisticRegression(C=C, max_iter=2000).fit(X, y)
+# 1. Разбиение на обучающую и тестовую выборки 70/30
+train, test = train_test_split(jobs, test_size=0.3, shuffle=True, random_state=42)
+y_train, y_test = train[target].values, test[target].values
+print(f"\nОбучение: {train.shape}, тест: {test.shape}")
+
+# 2. Склеиваем все признаки в один текст и строим мешок слов (CountVectorizer)
+text_train = train.drop(columns=[target]).astype(str).agg(' '.join, axis=1)
+text_test = test.drop(columns=[target]).astype(str).agg(' '.join, axis=1)
+
+count_vec = CountVectorizer()
+X_train_count = count_vec.fit_transform(text_train)
+X_test_count = count_vec.transform(text_test)
+print(f"Размер словаря: {X_train_count.shape[1]}")
+
+# 3-4. Логистическая регрессия на мешке слов
+log_reg = LogisticRegression(max_iter=2000).fit(X_train_count, y_train)
+print_metrics("CountVectorizer + LogisticRegression", y_test, log_reg.predict_proba(X_test_count)[:, 1])
+
+# 5. Слова с самыми большими положительными и отрицательными весами
+words = np.array(count_vec.get_feature_names_out())
+order = np.argsort(log_reg.coef_[0])
+print(f"\nСлова в сторону низкой зарплаты: {list(words[order[:10]])}")
+print(f"Слова в сторону высокой зарплаты: {list(words[order[-10:][::-1]])}")
+
+# 6-8. То же самое, но с TF-IDF вместо мешка слов
+tfidf_vec = TfidfVectorizer()
+X_train_tfidf = tfidf_vec.fit_transform(text_train)
+X_test_tfidf = tfidf_vec.transform(text_test)
+
+log_reg_tfidf = LogisticRegression(max_iter=2000).fit(X_train_tfidf, y_train)
+print_metrics("TF-IDF + LogisticRegression", y_test, log_reg_tfidf.predict_proba(X_test_tfidf)[:, 1])
+
+# 9. Сравнение: смотрим на ROC-AUC и F1 у CountVectorizer и TF-IDF выше.
+# TF-IDF уменьшает вес слов, которые встречаются почти во всех вакансиях.
+
+# 10. Веса слов для TF-IDF
+words = np.array(tfidf_vec.get_feature_names_out())
+order = np.argsort(log_reg_tfidf.coef_[0])
+print(f"\nСлова в сторону низкой зарплаты: {list(words[order[:10]])}")
+print(f"Слова в сторону высокой зарплаты: {list(words[order[-10:][::-1]])}")
+
+# 11. TF-IDF только по тексту (Job Title + Job Description), остальные признаки - категориальные
+job_text_train = train[text_cols].astype(str).agg(' '.join, axis=1)
+job_text_test = test[text_cols].astype(str).agg(' '.join, axis=1)
+
+tfidf_job = TfidfVectorizer()
+T_train = tfidf_job.fit_transform(job_text_train)
+T_test = tfidf_job.transform(job_text_test)
+print(f"\nTF-IDF по Job Title + Job Description: {T_train.shape}")
+print(f"Категориальные признаки: {cat_cols}")
+
+# 12. One-hot кодирование категориальных признаков + TF-IDF текста
+one_hot = OneHotEncoder(handle_unknown='ignore')
+O_train = one_hot.fit_transform(train[cat_cols].astype(str))
+O_test = one_hot.transform(test[cat_cols].astype(str))
+
+X_train_12 = hstack([T_train, O_train]).tocsr()
+X_test_12 = hstack([T_test, O_test]).tocsr()
+log_reg_12 = LogisticRegression(max_iter=2000).fit(X_train_12, y_train)
+print_metrics("TF-IDF + one-hot", y_test, log_reg_12.predict_proba(X_test_12)[:, 1])
+
+# 13. Счётчики: категорию заменяем на долю вакансий с высокой зарплатой среди вакансий с той же категорией.
+# Чтобы не было утечки ответа, на обучении текущий объект в подсчёт не включаем (leave-one-out),
+# а на тесте используем статистику по всей обучающей выборке.
+prior = y_train.mean()   # общая доля класса 1 - для редких и новых категорий
+y_train_series = pd.Series(y_train, index=train.index)
+
+C_train = np.zeros((len(train), len(cat_cols)))
+C_test = np.zeros((len(test), len(cat_cols)))
+for j, col in enumerate(cat_cols):
+    values_train = train[col].astype(str)
+    values_test = test[col].astype(str)
+
+    sum_in_group = y_train_series.groupby(values_train).transform('sum')
+    count_in_group = y_train_series.groupby(values_train).transform('count')
+    loo = (sum_in_group - y_train_series) / (count_in_group - 1)
+    C_train[:, j] = loo.where(count_in_group > 1, prior).values
+
+    group_mean = y_train_series.groupby(values_train).mean()
+    C_test[:, j] = values_test.map(group_mean).fillna(prior).values
+
+X_train_13 = hstack([T_train, csr_matrix(C_train)]).tocsr()
+X_test_13 = hstack([T_test, csr_matrix(C_test)]).tocsr()
+log_reg_13 = LogisticRegression(max_iter=2000).fit(X_train_13, y_train)
+print_metrics("TF-IDF + счётчики", y_test, log_reg_13.predict_proba(X_test_13)[:, 1])
+
+# 14. Сравнение one-hot и счётчиков: смотрим на метрики п. 12 и п. 13.
+# Счётчики дают всего по одному столбцу на признак, а one-hot - по столбцу на каждую категорию.
 
 
-# =====================================================================
-# 1. Разбиение 70/30
-# =====================================================================
-train, test = train_test_split(df, test_size=0.3, shuffle=True, random_state=42)
-y_train, y_test = train[TARGET].values, test[TARGET].values
-print("1. train:", len(train), "test:", len(test))
-
-# =====================================================================
-# 2-5. Все признаки склеены в один текст + CountVectorizer
-# =====================================================================
-
-
-def all_text(data):
-    return data.drop(columns=[TARGET]).astype(str).agg(" ".join, axis=1)
-
-
-txt_train, txt_test = all_text(train), all_text(test)
-
-cv = CountVectorizer()
-Xc_train = cv.fit_transform(txt_train)
-Xc_test = cv.transform(txt_test)
-print("2. размер словаря CountVectorizer:", Xc_train.shape[1])
-
-lr_cv = fit_lr(Xc_train, y_train)
-print("3-4. логистическая регрессия на мешке слов")
-evaluate("CountVectorizer", y_test, lr_cv.predict_proba(Xc_test)[:, 1])
-
-
-def show_top_words(model, vectorizer, n=10):
-    words = np.array(vectorizer.get_feature_names_out())
-    order = np.argsort(model.coef_[0])
-    print("   сильнее всего в сторону НИЗКОЙ зарплаты:", list(words[order[:n]]))
-    print("   сильнее всего в сторону ВЫСОКОЙ зарплаты:", list(words[order[-n:]][::-1]))
-
-
-print("5. веса признаков")
-show_top_words(lr_cv, cv)
-
-# =====================================================================
-# 6-10. TF-IDF на склеенном тексте
-# =====================================================================
-tf = TfidfVectorizer()
-Xt_train = tf.fit_transform(txt_train)
-Xt_test = tf.transform(txt_test)
-lr_tf = fit_lr(Xt_train, y_train)
-print("6-8. логистическая регрессия на tf-idf")
-evaluate("TF-IDF", y_test, lr_tf.predict_proba(Xt_test)[:, 1])
-print("9. сравнение с п. 5: смотрите ROC-AUC/F1 выше (CountVectorizer и TF-IDF).")
-print("10. веса признаков")
-show_top_words(lr_tf, tf)
-
-# =====================================================================
-# 11. Текст только из Job Title + Job Description, остальное - категориальные
-# =====================================================================
-
-
-def job_text(data):
-    return data[TEXT_COLS].astype(str).agg(" ".join, axis=1)
-
-
-tf2 = TfidfVectorizer()
-T_train = tf2.fit_transform(job_text(train))
-T_test = tf2.transform(job_text(test))
-print("11. размер tf-idf по Job Title + Job Description:", T_train.shape)
-
-# =====================================================================
-# 12. One-hot для категориальных признаков
-# =====================================================================
-ohe = OneHotEncoder(handle_unknown="ignore")
-O_train = ohe.fit_transform(train[CAT_COLS].astype(str))
-O_test = ohe.transform(test[CAT_COLS].astype(str))
-X12_train = hstack([T_train, O_train]).tocsr()
-X12_test = hstack([T_test, O_test]).tocsr()
-lr12 = fit_lr(X12_train, y_train)
-print("12. tf-idf + one-hot")
-res12 = roc_auc_score(y_test, lr12.predict_proba(X12_test)[:, 1])
-evaluate("one-hot", y_test, lr12.predict_proba(X12_test)[:, 1])
-
-# =====================================================================
-# 13. Счётчики (target encoding без утечки)
-# =====================================================================
-
-
-def counters_loo(train_df, y, columns):
-    """Для обучающей выборки: доля класса 1 среди ДРУГИХ объектов с тем же значением
-    признака (текущий объект исключается). Считается через groupby без циклов по объектам."""
+# 15. Счётчики по фолдам: для объектов одного фолда считаем статистику по остальным фолдам.
+# Подбираем число фолдов и коэффициент регуляризации C по accuracy на валидационной выборке.
+def kfold_counters(data, y, n_folds):
+    y_series = pd.Series(y, index=data.index)
     prior = y.mean()
-    out = np.zeros((len(train_df), len(columns)))
-    ys = pd.Series(y, index=train_df.index)
-    for j, col in enumerate(columns):
-        g = train_df[col].astype(str)
-        s = ys.groupby(g).transform("sum")
-        c = ys.groupby(g).transform("count")
-        loo = (s - ys) / (c - 1)
-        out[:, j] = loo.where(c > 1, prior).values      # редкие значения -> общая доля
-    return out
+    result = np.full((len(data), len(cat_cols)), prior)
+    for fit_idx, apply_idx in KFold(n_folds, shuffle=True, random_state=0).split(data):
+        for j, col in enumerate(cat_cols):
+            values = data[col].astype(str)
+            group_mean = y_series.iloc[fit_idx].groupby(values.iloc[fit_idx]).mean()
+            result[apply_idx, j] = values.iloc[apply_idx].map(group_mean).fillna(prior).values
+    return result
 
 
-def counters_apply(train_df, y, other_df, columns):
-    """Для контрольной выборки: доля класса 1 по всей обучающей выборке."""
-    prior = y.mean()
-    out = np.zeros((len(other_df), len(columns)))
-    ys = pd.Series(y, index=train_df.index)
-    for j, col in enumerate(columns):
-        stats = ys.groupby(train_df[col].astype(str)).mean()
-        out[:, j] = other_df[col].astype(str).map(stats).fillna(prior).values
-    return out
-
-
-C_train = counters_loo(train, y_train, CAT_COLS)
-C_test = counters_apply(train, y_train, test, CAT_COLS)
-X13_train = hstack([T_train, csr_matrix(C_train)]).tocsr()
-X13_test = hstack([T_test, csr_matrix(C_test)]).tocsr()
-lr13 = fit_lr(X13_train, y_train)
-print("13. tf-idf + счётчики")
-evaluate("счётчики", y_test, lr13.predict_proba(X13_test)[:, 1])
-print("14. сравните п. 12 (one-hot) и п. 13 (счётчики) по метрикам выше:")
-print("    счётчики дают по одному признаку на столбец (компактно), one-hot - тысячи столбцов.")
-
-# =====================================================================
-# 15-16. Подбор числа фолдов для счётчиков и коэффициента регуляризации C
-# =====================================================================
-
-
-def counters_kfold(train_df, y, columns, n_folds, seed=0):
-    """Счётчики для обучающей выборки по K фолдам: значение для объекта считается по остальным фолдам."""
-    prior = y.mean()
-    out = np.full((len(train_df), len(columns)), prior)
-    ys = pd.Series(y, index=train_df.index)
-    for fit_idx, apply_idx in KFold(n_folds, shuffle=True, random_state=seed).split(train_df):
-        for j, col in enumerate(columns):
-            stats = ys.iloc[fit_idx].groupby(train_df[col].astype(str).iloc[fit_idx]).mean()
-            values = train_df[col].astype(str).iloc[apply_idx].map(stats).fillna(prior)
-            out[apply_idx, j] = values.values
-    return out
+def test_counters(train_data, y, other_data):
+    y_series = pd.Series(y, index=train_data.index)
+    result = np.zeros((len(other_data), len(cat_cols)))
+    for j, col in enumerate(cat_cols):
+        group_mean = y_series.groupby(train_data[col].astype(str)).mean()
+        result[:, j] = other_data[col].astype(str).map(group_mean).fillna(y.mean()).values
+    return result
 
 
 sub_train, valid = train_test_split(train, test_size=0.2, random_state=42)
-y_sub, y_valid = sub_train[TARGET].values, valid[TARGET].values
-T_sub = tf2.fit_transform(job_text(sub_train))
-T_valid = tf2.transform(job_text(valid))
-V_valid = counters_apply(sub_train, y_sub, valid, CAT_COLS)
+y_sub, y_valid = sub_train[target].values, valid[target].values
 
-best = (-1, None, None)
-print("15. подбор (число фолдов, C) по accuracy на валидации:")
+tfidf_sub = TfidfVectorizer()
+T_sub = tfidf_sub.fit_transform(sub_train[text_cols].astype(str).agg(' '.join, axis=1))
+T_valid = tfidf_sub.transform(valid[text_cols].astype(str).agg(' '.join, axis=1))
+X_valid = hstack([T_valid, csr_matrix(test_counters(sub_train, y_sub, valid))]).tocsr()
+
+best_acc, best_folds, best_C = 0, None, None
+print("\nПодбор числа фолдов и C:")
 for n_folds in [2, 3, 5, 10]:
-    C_sub = counters_kfold(sub_train, y_sub, CAT_COLS, n_folds)
-    X_sub = hstack([T_sub, csr_matrix(C_sub)]).tocsr()
-    X_val = hstack([T_valid, csr_matrix(V_valid)]).tocsr()
+    X_sub = hstack([T_sub, csr_matrix(kfold_counters(sub_train, y_sub, n_folds))]).tocsr()
     for C in [0.01, 0.1, 1, 10, 100]:
-        acc = accuracy_score(y_valid, fit_lr(X_sub, y_sub, C).predict(X_val))
-        print("    фолдов=%-2d C=%-6g accuracy=%.4f" % (n_folds, C, acc))
-        if acc > best[0]:
-            best = (acc, n_folds, C)
-print("    лучшее: accuracy=%.4f, фолдов=%d, C=%g" % best)
+        model = LogisticRegression(C=C, max_iter=2000).fit(X_sub, y_sub)
+        acc = accuracy_score(y_valid, model.predict(X_valid))
+        print(f"фолдов = {n_folds}, C = {C}: accuracy = {acc:.4f}")
+        if acc > best_acc:
+            best_acc, best_folds, best_C = acc, n_folds, C
+print(f"Лучшее: accuracy = {best_acc:.4f}, фолдов = {best_folds}, C = {best_C}")
 
-# 16. Итоговая модель на всей обучающей выборке
-_, best_folds, best_C = best
-tf2 = TfidfVectorizer()
-T_train = tf2.fit_transform(job_text(train))
-T_test = tf2.transform(job_text(test))
-C_train = counters_kfold(train, y_train, CAT_COLS, best_folds)
-C_test = counters_apply(train, y_train, test, CAT_COLS)
-X_train = hstack([T_train, csr_matrix(C_train)]).tocsr()
-X_test = hstack([T_test, csr_matrix(C_test)]).tocsr()
-final = fit_lr(X_train, y_train, best_C)
-print("16. итоговая модель с подобранными гиперпараметрами")
-evaluate("итог", y_test, final.predict_proba(X_test)[:, 1])
+# 16. Итоговая модель с лучшими параметрами на всей обучающей выборке
+X_train_16 = hstack([T_train, csr_matrix(kfold_counters(train, y_train, best_folds))]).tocsr()
+X_test_16 = hstack([T_test, csr_matrix(test_counters(train, y_train, test))]).tocsr()
+final_model = LogisticRegression(C=best_C, max_iter=2000).fit(X_train_16, y_train)
+print_metrics("Итоговая модель", y_test, final_model.predict_proba(X_test_16)[:, 1])

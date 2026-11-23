@@ -1,46 +1,48 @@
-"""ЛР №2, задание 4: набор данных для бинарной классификации по цвету пикселя.
-
-Нужна картинка pic.jpg (цветная). Выбираем один цвет TARGET_RGB, который есть на картинке.
-Пиксели, близкие к этому цвету, получают метку 1, далёкие - метку 0.
-Результат: lab2_task4_data.csv со столбцами R, G, B, label.
-
-Запуск: python lab2_task4_color_dataset.py pic.jpg 255 255 0
-(цвет можно не указывать - тогда возьмётся самый частый цвет на картинке)
-"""
-import sys
-
+from PIL import Image
 import numpy as np
 import pandas as pd
-from PIL import Image
+import matplotlib.pyplot as plt
 
-path = sys.argv[1] if len(sys.argv) > 1 else "pic.jpg"
-img = np.array(Image.open(path).convert("RGB"))   # массив (высота, ширина, 3)
-print("Картинка:", img.shape)
+# https://upload.wikimedia.org/wikipedia/commons/8/86/StAnthony.jpg?utm_source=ru.wikipedia.org&utm_campaign=imageinfo&utm_content=original
+im = Image.open('StAnthony.jpg')
+#plt.imshow(im)
+a = np.asarray(im)
 
-pixels = img.reshape(-1, 3).astype(int)
+target_color = np.array([253, 238, 147])
+toler = 30
 
-if len(sys.argv) >= 5:
-    target = np.array([int(v) for v in sys.argv[2:5]])
-else:
-    # самый частый цвет (с округлением до 32, чтобы похожие цвета считались вместе)
-    rounded = (pixels // 32) * 32 + 16
-    values, counts = np.unique(rounded, axis=0, return_counts=True)
-    target = values[counts.argmax()]
-print("Выбранный цвет (R, G, B):", target)
+# a[50:70, 80:100] nado
+#a[200:250, 70:120] ne nado
+#plt.imshow(a[200:250, 70:120])
 
-dist = np.sqrt(((pixels - target) ** 2).sum(axis=1))   # расстояние до выбранного цвета
-yes = pixels[dist < 40]      # цвет присутствует
-no = pixels[dist > 120]      # цвета нет
-print("Подходящих пикселей:", len(yes), "| неподходящих:", len(no))
+pos_region = a[50:70, 80:100]
 
-N = min(500, len(yes), len(no))        # берём одинаковое число примеров каждого класса
-rng = np.random.default_rng(0)
-yes = yes[rng.choice(len(yes), N, replace=False)]
-no = no[rng.choice(len(no), N, replace=False)]
+neg_region = a[200:250, 70:120]
 
-data = pd.DataFrame(np.vstack([yes, no]), columns=["R", "G", "B"])
-data["label"] = [1] * N + [0] * N
-data = data.sample(frac=1, random_state=0).reset_index(drop=True)   # перемешать
-data.to_csv("lab2_task4_data.csv", index=False)
-print(data.head())
-print("Сохранено:", len(data), "строк в lab2_task4_data.csv")
+# Визуализация выбранных зон для проверки
+plt.figure(figsize=(10, 4))
+plt.subplot(1, 2, 1)
+plt.imshow(pos_region)
+plt.axis('off')
+
+plt.subplot(1, 2, 2)
+plt.imshow(neg_region)
+plt.axis('off')
+plt.show()
+
+pos_pixels = pos_region.reshape(-1, 3)
+neg_pixels = neg_region.reshape(-1, 3)
+
+df_pos = pd.DataFrame(pos_pixels, columns=['R', 'G', 'B'])
+df_pos['Is it our color?'] = 1
+
+df_neg = pd.DataFrame(neg_pixels, columns=['R', 'G', 'B'])
+df_neg['Is it our color?'] = 0
+
+df_train = pd.concat([df_pos, df_neg], ignore_index=True)
+
+# перемешивание
+df_train = df_train.sample(frac=1).reset_index(drop=True)
+
+print("Размер обучающей выборки:", df_train.shape)
+print(df_train[:50])

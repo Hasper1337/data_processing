@@ -31,6 +31,8 @@ median_salary = jobs['Salary Estimate'].median()
 jobs['Salary Estimate'] = (jobs['Salary Estimate'] > median_salary).astype(int)
 
 jobs = jobs.drop(columns=['Unnamed: 0', 'Rating', 'Revenue', 'Easy Apply'], errors='ignore')
+# Пропуски заменяем на '-1' (так в этом датасете уже обозначены пустые значения), иначе склейка текста падает
+jobs = jobs.fillna('-1')
 print(f"Вакансий: {len(jobs)}, медиана зарплаты: {median_salary:.0f}")
 print(f"Доля класса 1: {jobs['Salary Estimate'].mean():.3f}")
 
